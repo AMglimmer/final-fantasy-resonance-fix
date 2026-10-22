@@ -4,9 +4,12 @@ use std::path::Path;
 
 use grapnel::{Context, MidHook};
 use windows::Win32::Foundation::{HMODULE, SYSTEMTIME};
+use windows::Win32::System::Diagnostics::Debug::FlushInstructionCache;
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::System::Memory::{
-    PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS, VirtualProtect,
+    MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
+    PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS, PAGE_PROTECTION_FLAGS, VirtualProtect,
+    VirtualQuery,
 };
 use windows::Win32::System::ProcessStatus::{GetModuleInformation, MODULEINFO};
 use windows::Win32::System::SystemInformation::GetLocalTime;
@@ -147,7 +150,7 @@ fn parse_pattern(pattern: &str) -> Vec<Option<u8>> {
 /// Overwrites memory at `address` with `pattern` (an IDA-style byte string,
 /// e.g. `"DE AD BE EF"`), temporarily marking the region writable, then
 /// restoring its original protection.
-pub fn patch(address: usize, pattern: &str) {
+pub fn patch(address: usize, pattern: &str) -> bool {
     let bytes: Vec<u8> = pattern
         .split_whitespace()
         .map(|b| u8::from_str_radix(b, 16).expect("invalid byte in patch pattern"))
@@ -155,20 +158,37 @@ pub fn patch(address: usize, pattern: &str) {
 
     unsafe {
         let mut old_protect = PAGE_PROTECTION_FLAGS(0);
-        let _ = VirtualProtect(
+        if VirtualProtect(
             address as *const c_void,
             bytes.len(),
             PAGE_EXECUTE_READWRITE,
             &mut old_protect,
-        );
+        )
+        .is_err()
+        {
+            log::error!("Patch: VirtualProtect failed @ {address:X}; write skipped");
+            return false;
+        }
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), address as *mut u8, bytes.len());
+        let flushed = FlushInstructionCache(
+            GetCurrentProcess(),
+            Some(address as *const c_void),
+            bytes.len(),
+        );
+        if let Err(error) = &flushed {
+            log::error!("Patch: instruction cache flush failed @ {address:X}: {error}");
+        }
         let mut discard = PAGE_PROTECTION_FLAGS(0);
-        let _ = VirtualProtect(
+        let restored = VirtualProtect(
             address as *const c_void,
             bytes.len(),
             old_protect,
             &mut discard,
         );
+        if let Err(error) = &restored {
+            log::error!("Patch: protection restore failed @ {address:X}: {error}");
+        }
+        flushed.is_ok() && restored.is_ok()
     }
 }
 
@@ -206,43 +226,72 @@ fn aob_scan(data: &[u8], pattern: &[Option<u8>]) -> Option<usize> {
 }
 
 /// Scans `module`'s memory for `signature`, returning the absolute address of the
-/// first match, if any.
+/// unique match, if any. Ambiguous matches are rejected.
 pub fn pattern_scan(module: HMODULE, signature: &str) -> Option<usize> {
-    let (base, size) = get_module_range(module)?;
-    let data = unsafe { std::slice::from_raw_parts(base, size) };
-    let pattern = parse_pattern(signature);
-    aob_scan(data, &pattern).map(|offset| base as usize + offset)
+    let hits = pattern_scan_all(module, signature);
+    if hits.len() != 1 {
+        log::error!(
+            "Signature must match once, found {}: {signature}",
+            hits.len()
+        );
+        return None;
+    }
+    Some(hits[0])
 }
 
 /// Scans `module` for every occurrence of `signature`, returning all matching
 /// absolute addresses.
 ///
-/// Useful for data like UI strings, where the same text can appear more than
-/// once and every copy needs patching.
+/// Only committed, readable executable regions are searched.
 pub fn pattern_scan_all(module: HMODULE, signature: &str) -> Vec<usize> {
     let Some((base, size)) = get_module_range(module) else {
         return Vec::new();
     };
+    scan_code_range(base as usize, size, signature)
+}
 
-    let data = unsafe { std::slice::from_raw_parts(base, size) };
+fn scan_code_range(base: usize, size: usize, signature: &str) -> Vec<usize> {
     let pattern = parse_pattern(signature);
     let mut hits = Vec::new();
     if pattern.is_empty() {
         return hits;
     }
 
-    let mut i = 0;
-    while i + pattern.len() <= data.len() {
-        let matched = data[i..i + pattern.len()]
-            .iter()
-            .zip(pattern.iter())
-            .all(|(byte, pat)| pat.is_none_or(|p| *byte == p));
-        if matched {
-            hits.push(base as usize + i);
-            i += pattern.len();
-        } else {
-            i += 1;
+    // A SizeOfImage-wide slice can span guard/no-access or uncommitted pages.
+    // These signatures identify code, so scan only readable executable regions.
+    let mut at = base;
+    let end = at + size;
+    while at < end {
+        let mut memory = MEMORY_BASIC_INFORMATION::default();
+        if unsafe {
+            VirtualQuery(
+                Some(at as *const c_void),
+                &mut memory,
+                std::mem::size_of_val(&memory),
+            )
+        } == 0
+        {
+            break;
         }
+        let next = (memory.BaseAddress as usize + memory.RegionSize).min(end);
+        if next <= at {
+            break;
+        }
+        let executable = memory.Protect.0
+            & (PAGE_EXECUTE_READ.0 | PAGE_EXECUTE_READWRITE.0 | PAGE_EXECUTE_WRITECOPY.0)
+            != 0;
+        if memory.State == MEM_COMMIT
+            && executable
+            && memory.Protect.0 & (PAGE_GUARD.0 | PAGE_NOACCESS.0) == 0
+        {
+            let data = unsafe { std::slice::from_raw_parts(at as *const u8, next - at) };
+            let mut offset = 0;
+            while let Some(found) = aob_scan(&data[offset..], &pattern) {
+                hits.push(at + offset + found);
+                offset += found + pattern.len();
+            }
+        }
+        at = next;
     }
     hits
 }
@@ -278,7 +327,7 @@ where
 /// Scans `module` for `sh.signature` and, if found, installs a mid-function
 /// hook permanently for the duration of the main process at the address plus
 /// `sh.offset` that jumps to the `callback`. Reports whether the hook went in.
-pub fn inject_hook<F>(module: &ModuleInfo, sh: &SignatureHook, callback: F) -> bool
+pub fn inject_hook<F>(module: &ModuleInfo, sh: &SignatureHook, mut callback: F) -> bool
 where
     F: FnMut(&mut Context) + Send + 'static,
 {
@@ -294,7 +343,26 @@ where
             );
 
             let hook_addr = (addr + sh.offset) as *mut u8;
-            match MidHook::install(hook_addr, callback) {
+            let mut last_status = u32::MAX;
+            let tag = sh.tag;
+            match MidHook::install(hook_addr, move |ctx| {
+                if !crate::runtime::installed() {
+                    return;
+                }
+                let status = crate::bridge::ffi::sdk_ready();
+                if status != last_status {
+                    log::info!(
+                        "{tag}: SDK callback state {status} (0=waiting, 1=validated, 2=layout rejected)"
+                    );
+                    last_status = status;
+                }
+                if status == 1 {
+                    crate::fixes::on_validated_callback();
+                    if crate::runtime::installed() {
+                        callback(ctx);
+                    }
+                }
+            }) {
                 Ok(_hook) => {
                     log::info!(
                         "{} : Hooked @ {}+{:x}",
@@ -305,6 +373,7 @@ where
                     true
                 }
                 Err(e) => {
+                    crate::runtime::reject_install();
                     log::error!(
                         "{} : Failed to install hook for '{}': {e}",
                         sh.tag,
@@ -315,6 +384,7 @@ where
             }
         }
         None => {
+            crate::runtime::reject_install();
             log::error!("{} : Did not find '{}'", sh.tag, sh.signature);
             false
         }
@@ -323,7 +393,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{aob_scan, parse_pattern};
+    use super::{aob_scan, parse_pattern, scan_code_range};
     #[test]
     fn reference_scanner_handles_wildcards_and_bounds() {
         let pattern = parse_pattern("40 ?? 57");
@@ -331,5 +401,47 @@ mod tests {
         assert_eq!(aob_scan(&[0x40, 0x55], &pattern), None);
         assert_eq!(aob_scan(&[0x40, 0x55, 0x58], &pattern), None);
         assert_eq!(aob_scan(&[0x40], &[]), None);
+    }
+
+    #[test]
+    fn code_scan_skips_inaccessible_pages_and_finds_ambiguous_matches() {
+        use std::ffi::c_void;
+        use windows::Win32::System::Memory::*;
+        unsafe {
+            let base = VirtualAlloc(
+                None,
+                0x3000,
+                MEM_RESERVE | MEM_COMMIT,
+                PAGE_EXECUTE_READWRITE,
+            );
+            assert!(!base.is_null());
+            let first = base as usize + 32;
+            let second = base as usize + 0x2000 + 64;
+            let bytes = [0x40u8, 0x55, 0x57, 0x66, 0x90];
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), first as *mut u8, bytes.len());
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), second as *mut u8, bytes.len());
+            let mut old = PAGE_PROTECTION_FLAGS(0);
+            VirtualProtect(
+                (base as usize + 0x1000) as *const c_void,
+                0x1000,
+                PAGE_NOACCESS,
+                &mut old,
+            )
+            .unwrap();
+            let hits = scan_code_range(base as usize, 0x3000, "40 ?? 57 66 90");
+            assert_eq!(hits, vec![first, second]);
+            VirtualProtect(
+                (base as usize + 0x2000) as *const c_void,
+                0x1000,
+                PAGE_READWRITE,
+                &mut old,
+            )
+            .unwrap();
+            assert_eq!(
+                scan_code_range(base as usize, 0x3000, "40 ?? 57 66 90"),
+                vec![first]
+            );
+            VirtualFree(base, 0, MEM_RELEASE).unwrap();
+        }
     }
 }

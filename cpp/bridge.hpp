@@ -9,6 +9,8 @@
 /// for the corrections.
 
 namespace ffrs {
+bool initialize_sdk(std::size_t objects, std::size_t append, std::size_t event) noexcept;
+std::uint32_t sdk_ready() noexcept;
 
 /// @name Post-processing controls
 /// Defined in post_processing.cpp and called from the final-view hook.

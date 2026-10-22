@@ -23,6 +23,8 @@ pub mod ffi {
     }
     unsafe extern "C++" {
         include!("cpp/bridge.hpp");
+        unsafe fn initialize_sdk(objects: usize, append: usize, event: usize) -> bool;
+        fn sdk_ready() -> u32;
         // Production calls this helper from C++; Rust exercises it in tests.
         #[allow(dead_code)]
         fn letterbox_inset(width: f64, height: f64, aspect: f64) -> Inset;

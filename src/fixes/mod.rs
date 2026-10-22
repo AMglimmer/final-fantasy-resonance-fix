@@ -23,8 +23,11 @@ use crate::{
 
 /// Applies every fix the config enables.
 pub fn install(module: &ModuleInfo, config: &Config) {
+    if !aspect_ratio::prepare(module) {
+        crate::runtime::reject_install();
+        return;
+    }
     fonts::install(module, &config.fonts);
-    aspect_ratio::apply(module);
     post_processing::install(module, config.post_processing);
     if config.hud.enable {
         // Re-framing the capture and holding the transition's layout to its
@@ -38,6 +41,10 @@ pub fn install(module: &ModuleInfo, config: &Config) {
     if config.movies.enable {
         movies::install(module);
     }
+}
+
+pub(crate) fn on_validated_callback() {
+    aspect_ratio::apply_prepared();
 }
 
 /// Installs the native widget callbacks both fixes correct through, each
@@ -75,17 +82,17 @@ fn hook_shared_widget_updates(module: &ModuleInfo, config: &Config) {
         signature: "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 70 0F B6 B1 DC 00 00 00 48 8B D9 0F B6 FA 40 3A F7 74 07 40 88 B9 DC 00 00 00",
         offset: 0,
     };
-    let visibility_ready = (movies || hud)
-        && inject_hook(module, &visibility, move |ctx| {
-            let widget = ctx.rcx as usize;
-            if movies {
-                movies::on_visibility(widget, ctx.rdx as u8);
-            }
-            if hud {
-                hud::expand_menu_backdrop(widget);
-                log_report(unsafe { ffi::update_map_backdrop(widget, ctx.rdx as u8 as i32) });
-            }
-        });
+    // Also supplies the first validated engine callback for aspect-only configs.
+    let visibility_ready = inject_hook(module, &visibility, move |ctx| {
+        let widget = ctx.rcx as usize;
+        if movies {
+            movies::on_visibility(widget, ctx.rdx as u8);
+        }
+        if hud {
+            hud::expand_menu_backdrop(widget);
+            log_report(unsafe { ffi::update_map_backdrop(widget, ctx.rdx as u8 as i32) });
+        }
+    });
     // Wrapping a movie root is only safe once the wrapper's dismissal is
     // synchronized, so that branch waits on the visibility hook; the dimming
     // scale carries no such dependency.

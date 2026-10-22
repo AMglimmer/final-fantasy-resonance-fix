@@ -1,6 +1,7 @@
 mod bridge;
 mod config;
 mod fixes;
+mod runtime;
 #[allow(dead_code)] // Shared reference utilities also serve mods with memory patches.
 mod utils;
 
@@ -67,7 +68,19 @@ fn main(this_module: HMODULE) {
             return;
         }
 
+        if !runtime::initialize(&module) {
+            log::error!("SDK initialization failed; game left unmodified");
+            return;
+        }
+        log::info!("SDK addresses initialized; reflection validation deferred to engine callback");
         fixes::install(&module, &config);
+        if runtime::finish_install() {
+            log::info!(
+                "Installation finished; waiting for validated engine callback before aspect writes"
+            );
+        } else {
+            log::error!("Installation incomplete; callbacks and aspect writes disabled");
+        }
     });
 
     if result.is_err() {
