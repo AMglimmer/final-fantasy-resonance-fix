@@ -1,7 +1,9 @@
 # Steam retail compatibility investigation — 2026-10-23
 
-Based on upstream `585a57d` (0.2.0). This is a local compatibility candidate,
-not a claim of completed gameplay or ultrawide visual validation.
+Based on upstream `585a57d` (0.2.0). The user has since confirmed ultrawide
+gameplay scenes and the world map at 3440x1440. Runtime logs confirm SDK
+validation and HUD/movie callbacks. Full CG, every UI screen, same-camera
+Hor+ image comparison and long-session validation remain incomplete.
 
 ## Evidence
 

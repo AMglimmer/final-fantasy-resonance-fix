@@ -1,4 +1,31 @@
 # FINAL FANTASY RESONANCE Fix
+
+## Steam retail portable release
+
+This is AMglimmer's retail compatibility fork of PolarWizard's original fix.
+Download the Windows x64 portable ZIP from this fork's **Releases** page. It
+needs no Rust or Python: extract it, exit the game, run `Install.cmd`, and point
+it at the Steam retail game root or `FFRS\Binaries\Win64`.
+
+Supported retail build: **24250053**, tested at **3440×1440**. Gameplay scenes
+and the world map have been confirmed by the user; SDK/HUD/movie callbacks are
+present in runtime logs. Full CG and all UI screens are still awaiting complete
+visual validation. The first portable release is marked as a prerelease.
+
+The retail fix resolves SDK addresses from unique signatures and validates
+object layouts before applying corrections. The original Rust/C++ architecture,
+movie handling and Hor+ logic are retained. Game EXEs, Paks, saves and the Demo
+are not modified. Updates to the game require compatibility revalidation.
+
+See [portable instructions](portable/README.md), [中文说明](portable/README.zh-CN.md)
+and [technical compatibility notes](RETAIL_COMPATIBILITY.md).
+
+Default portable configuration enables centered 16:9 HUD, movie aspect handling,
+and original post-processing; custom fonts remain disabled. Backups and optional
+Disable/Enable/Uninstall scripts are included.
+
+The original project documentation follows.
+
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/PolarWizard/final-fantasy-resonance-fix/total)
 
 ***This project is designed exclusively for Windows due to its reliance on Windows-specific APIs.***
