@@ -137,3 +137,29 @@ Disable by renaming only scripts/final_fantasy_resonance_fix.asi to
 final_fantasy_resonance_fix.asi.disabled while the game is closed. The generated
 deployment shortcuts use the manager and its manifest; uninstall restores
 original files and preserves a user-edited TOML in the backup directory.
+# Capture-transition lifetime fix (2026-10-26)
+
+Four retail crash dumps identify the same cached scratch-target name check in
+`cpp/encounter.cpp::bounce_target`: the mod kept a render-target UObject only as
+a native pointer across transitions, without a GC-visible owner. Checking its
+full name after collection could dereference an invalid Outer chain.
+
+Scratch render targets are now scoped to one capture, with GPU resources
+released by the existing engine `ReleaseRenderTarget2D` wrapper on success and
+draw failure. Capture requests are consumed once, including failures; 16:9
+captures allocate no scratch. This removes that cached-pointer/name check
+without changing aspect or movie/HUD settings.
+
+Run `python scripts/test_capture_lifetime.py` in an x64 MSVC developer shell to
+exercise the actual encounter source with a small rendering fixture. It checks
+repeated transitions after target destruction, crop geometry, allocation/draw
+failures, one-shot requests and the 16:9 no-op. `--baseline` tests the published
+`f0595ed` baseline and demonstrates failure of its cached implementation.
+
+Build and offline tests passed. Retail startup validated the SDK and applied
+Hor+. The patched game process then remained running for about 64 monitored
+minutes without another captured crash, and the user subsequently reported
+stable gameplay. This supports the first stable retail release, without claiming
+exhaustive CG/UI or every-scene validation. The public binary uses the same
+runtime source with build paths remapped. Private crash dumps and logs are not
+distributed.

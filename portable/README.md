@@ -1,4 +1,4 @@
-# FF Resonance Ultrawide Fix — Windows x64 portable
+# FF Resonance Ultrawide Fix 0.2.1-retail.1 — Windows x64 portable
 
 Based on [PolarWizard/final-fantasy-resonance-fix](https://github.com/PolarWizard/final-fantasy-resonance-fix).
 This fork fixes SDK address resolution for Steam retail build **24250053**.
@@ -26,6 +26,13 @@ Default configuration: ultrawide scene rendering, maintain-Y FOV (Hor+),
 centered 16:9 HUD, original 16:9 movie handling, original post-processing,
 custom fonts disabled. At 3440×1440 the HUD uses the centered 2560×1440 area.
 
+### Upgrading from 0.2.0-retail.1
+
+Close the game and run this version's `Install.cmd` against the same game folder.
+The previous ASI is backed up and your TOML is preserved. Keep the new portable
+folder and use its management scripts after upgrading. Uninstalling this version
+restores the files present before the upgrade, which can include the old patch.
+
 ## Disable, enable or uninstall
 
 Exit the game, then run `Disable.cmd`, `Enable.cmd` or `Uninstall.cmd` from this
@@ -52,9 +59,16 @@ and `final_fantasy_resonance_fix.log`.
 The binary uses the runtime source tested locally, rebuilt with local build paths
 remapped for public distribution. The user confirmed
 ultrawide gameplay scenes and the world map. Runtime logs show successful SDK
-validation and HUD/movie callbacks. Sixteen automated tests passed. Full CG,
-all UI screens, same-camera Hor+ image comparison and long-session stability
-have not been exhaustively validated. This first retail release is a prerelease.
+validation and HUD/movie callbacks. This stable release fixes a stale scratch
+render-target cache used during dialogue/battle transitions. The target is now
+scoped to one capture, with GPU resources released on success and draw failure.
+Sixteen automated tests, the actual capture-source lifetime regression, and six
+portable deployment test groups passed. After installing the runtime fix, the
+game process remained running for about 64 monitored minutes without another
+captured crash; the user subsequently reported stable gameplay. Full CG, all UI
+screens and same-camera Hor+ image comparisons have not been exhaustively tested.
+
+The separate experimental background-mute helper is not part of this package.
 
 Only the documented build is supported; game updates require revalidation.
 This does not patch the on-disk game EXE, Paks, saves, DRM or anti-cheat.

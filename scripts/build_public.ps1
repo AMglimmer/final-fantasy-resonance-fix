@@ -15,4 +15,6 @@ $env:CARGO_TARGET_DIR = $TargetDirectory
 & cargo build --locked --release --manifest-path (Join-Path $repoRoot 'Cargo.toml')
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & cargo test --locked --release --manifest-path (Join-Path $repoRoot 'Cargo.toml')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& python (Join-Path $repoRoot 'scripts/test_capture_lifetime.py')
 exit $LASTEXITCODE

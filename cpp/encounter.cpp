@@ -3,14 +3,10 @@
 namespace ffrs {
 namespace {
 
-/// The target the back buffer capture was last handed, a context that resolves
-/// the world for the draws below, the scratch target those draws bounce
-/// through, and whether a capture is waiting to be re-framed. Identities are
-/// re-checked before use rather than trusted across frames.
+/// The game-owned target and subsystem for the pending capture. Scratch
+/// targets are owned only by the synchronous reframe below, never cached.
 UTextureRenderTarget2D* capture_target = nullptr;
 UObject* capture_context = nullptr;
-UTextureRenderTarget2D* scratch = nullptr;
-std::string scratch_name;
 bool pending = false;
 
 /// @brief Draws a region of @p source across the whole of @p destination.
@@ -45,19 +41,16 @@ bool draw_region(UTextureRenderTarget2D* destination, UTexture* source, const FV
 /// @brief The scratch target the re-frame reads from, created on demand.
 ///
 /// A draw cannot sample the target it writes, so the captured frame is copied
-/// aside and the crop is taken from the copy. Nothing in the game holds this
-/// object, so collection may take it between transitions; its name is what
-/// notices, and a fresh one is made when it does.
+/// aside and the crop is taken from the copy. Nothing in the game retains
+/// this UObject: caching its pointer across transitions would outlive GC.
+/// Create it for this capture only and release its GPU resource afterwards.
 ///
 /// @return A target in the capture's own size and format, or null.
 UTextureRenderTarget2D* bounce_target() {
-    if (!live(scratch) || scratch->GetFullName() != scratch_name) {
-        scratch = UKismetRenderingLibrary::CreateRenderTarget2D(
-            capture_context, capture_target->SizeX, capture_target->SizeY,
-            capture_target->RenderTargetFormat, capture_target->ClearColor, false, false);
-        scratch_name = live(scratch) ? scratch->GetFullName() : std::string{};
-    }
-    return live(scratch) ? scratch : nullptr;
+    auto target = UKismetRenderingLibrary::CreateRenderTarget2D(
+        capture_context, capture_target->SizeX, capture_target->SizeY,
+        capture_target->RenderTargetFormat, capture_target->ClearColor, false, false);
+    return live(target) ? target : nullptr;
 }
 
 } // namespace
@@ -136,12 +129,20 @@ rust::String reframe_capture(std::size_t address) {
     // of it at 32:9 against a 16:9 capture, and all of it on a screen no wider
     // than the capture, where there is nothing to trim.
     const double keep = std::min(1.0, captured_aspect() * viewport.Y / viewport.X);
-    auto bounce = approximately(keep, 1.0) ? nullptr : bounce_target();
-    if (!bounce || !draw_region(bounce, capture_target, {}, {1.0, 1.0})) {
+    // Consume the request even when a draw fails; retrying every widget update
+    // would allocate a fresh GPU target each frame until the next capture.
+    pending = false;
+    if (approximately(keep, 1.0)) return {};
+    auto bounce = bounce_target();
+    if (!bounce) return {};
+    struct ReleaseScratch {
+        UTextureRenderTarget2D* target;
+        ~ReleaseScratch() { UKismetRenderingLibrary::ReleaseRenderTarget2D(target); }
+    } release{bounce};
+    if (!draw_region(bounce, capture_target, {}, {1.0, 1.0})) {
         return {};
     }
-    pending = false;
-    draw_region(capture_target, bounce, {(1.0 - keep) / 2.0, 0.0}, {keep, 1.0});
+    if (!draw_region(capture_target, bounce, {(1.0 - keep) / 2.0, 0.0}, {keep, 1.0})) return {};
     return hud_report(
         "reframe_capture",
         std::format("Re-framed capture: kept {:g} of {}x{} at aspect {:g} on {:g}x{:g}", keep,

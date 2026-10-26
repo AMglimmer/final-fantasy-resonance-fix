@@ -41,6 +41,7 @@ fn main() {
             "void UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(",
             "void UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(",
             "class UTextureRenderTarget2D* UKismetRenderingLibrary::CreateRenderTarget2D(",
+            "void UKismetRenderingLibrary::ReleaseRenderTarget2D(",
             "void UCanvas::K2_DrawTexture(",
         ],
     );

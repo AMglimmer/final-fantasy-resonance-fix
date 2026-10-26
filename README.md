@@ -3,14 +3,19 @@
 ## Steam retail portable release
 
 This is AMglimmer's retail compatibility fork of PolarWizard's original fix.
-Download the Windows x64 portable ZIP from this fork's **Releases** page. It
+Download **v0.2.1-retail.1**, the Windows x64 portable ZIP from this fork's
+[latest release](https://github.com/AMglimmer/final-fantasy-resonance-fix/releases/latest). It
 needs no Rust or Python: extract it, exit the game, run `Install.cmd`, and point
 it at the Steam retail game root or `FFRS\Binaries\Win64`.
 
 Supported retail build: **24250053**, tested at **3440×1440**. Gameplay scenes
 and the world map have been confirmed by the user; SDK/HUD/movie callbacks are
 present in runtime logs. Full CG and all UI screens are still awaiting complete
-visual validation. The first portable release is marked as a prerelease.
+visual validation. This release fixes a collected scratch render target being
+accessed during dialogue/battle transitions. After the fix, the observed game
+process ran for approximately 64 minutes without another captured crash, and
+the user subsequently reported stable gameplay. This is the first stable retail
+release; it does not imply exhaustive testing of every scene.
 
 The retail fix resolves SDK addresses from unique signatures and validates
 object layouts before applying corrections. The original Rust/C++ architecture,
